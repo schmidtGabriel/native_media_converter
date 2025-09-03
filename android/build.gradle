@@ -1,0 +1,80 @@
+group = "com.schmidtGabriel.native_media_converter"
+version = "1.0-SNAPSHOT"
+
+
+buildscript {
+    ext.kotlin_version = "1.9.22"
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.1.4")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+
+android {
+      if (project.android.hasProperty("namespace")) {
+        namespace = "com.schmidtGabriel.native_media_converter"
+    }
+
+    compileSdk = 35
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+        test.java.srcDirs += "src/test/kotlin"
+    }
+
+    defaultConfig {
+        minSdk = 23
+    }
+
+    dependencies {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version")
+        implementation("androidx.annotation:annotation:1.7.0")
+        
+        // Google Media3 dependencies for video transcoding (Updated to 1.8.0 for consistency)
+        implementation("androidx.media3:media3-transformer:1.8.0")
+        implementation("androidx.media3:media3-effect:1.8.0")
+        implementation("androidx.media3:media3-common:1.8.0")
+        implementation("androidx.media3:media3-muxer:1.8.0")
+        implementation("androidx.media3:media3-extractor:1.8.0")
+        implementation("androidx.media3:media3-decoder:1.8.0")
+    
+        testImplementation("org.jetbrains.kotlin:kotlin-test")
+        testImplementation("org.mockito:mockito-core:5.0.0")
+    }
+
+    testOptions {
+        unitTests.all {
+            useJUnitPlatform()
+
+            testLogging {
+               events "passed", "skipped", "failed", "standardOut", "standardError"
+               outputs.upToDateWhen {false}
+               showStandardStreams = true
+            }
+        }
+    }
+}
