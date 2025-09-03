@@ -39,16 +39,18 @@ Import and use in your Dart code:
 import 'package:native_media_converter/native_media_converter.dart';
 
 // Example usage
-final result = await NativeMediaConverter.convertVideo(
+final result = await NativeMediaConverter.transcode(
 	inputPath: 'input.mp4',
 	outputPath: 'output.mp4',
 	resolution: 720, // 480, 720, 1080
-	frameRate: 30, // 15, 20, 30
+	fps: 30, // 15, 20, 30
+    videoBitrate: 2000000,
+    codec: "h264"
 );
 ```
 
 ## API Reference
-- `convertVideo({inputPath, outputPath, resolution, frameRate})` – Converts a video file with the specified parameters.
+- `transcode({inputPath, outputPath, resolution, fps})` – Converts a video file with the specified parameters.
 
 ## Contributing
 Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
