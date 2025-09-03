@@ -42,8 +42,8 @@ import 'package:native_media_converter/native_media_converter.dart';
 final result = await NativeMediaConverter.convertVideo(
 	inputPath: 'input.mp4',
 	outputPath: 'output.mp4',
-	resolution: Resolution.hd,
-	frameRate: 30,
+	resolution: 720, // 480, 720, 1080
+	frameRate: 30, // 15, 20, 30
 );
 ```
 
