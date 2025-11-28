@@ -1,24 +1,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-class HDROptions {
-  final bool isHdr; // input is HDR and you want to preserve HDR
-  final String colorStandard; // "bt2020" | "bt709"
-  final String transfer; // "pq" | "hlg" | "srgb"
-  final String range; // "full" | "limited"
-  HDROptions({
-    this.isHdr = false,
-    this.colorStandard = "bt709",
-    this.transfer = "srgb",
-    this.range = "limited",
-  });
-  Map<String, dynamic> toMap() => {
-    'isHdr': isHdr,
-    'colorStandard': colorStandard,
-    'transfer': transfer,
-    'range': range,
-  };
-}
 
 class ConvertOptions {
   final String inputPath;
@@ -38,7 +20,6 @@ class ConvertOptions {
   final int audioSampleRate;
   final int audioChannels;
   final Map<String,int>? crop; // {left, top, width, height} optional
-  final HDROptions hdr;
 
   ConvertOptions({
     required this.inputPath,
@@ -58,9 +39,7 @@ class ConvertOptions {
     this.audioSampleRate = 48000,
     this.audioChannels = 2,
     this.crop,
-
-    HDROptions? hdr,
-  }): hdr = hdr ?? HDROptions();
+  });
 
   Map<String, dynamic> toMap() => {
     'inputPath': inputPath,
@@ -80,7 +59,6 @@ class ConvertOptions {
     'audioSampleRate': audioSampleRate,
     'audioChannels': audioChannels,
     'crop': crop,
-    'hdr': hdr.toMap(),
   };
 }
 

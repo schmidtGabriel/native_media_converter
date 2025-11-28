@@ -22,7 +22,7 @@ Add this to your package's `pubspec.yaml` file:
 
 ```yaml
 dependencies:
-  native_media_converter: ^0.0.1
+  native_media_converter: ^0.0.2
 ```
 
 Then run:

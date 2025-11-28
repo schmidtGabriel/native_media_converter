@@ -80,6 +80,8 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  
+
   Future<void> _pickVideo() async {
     await _requestPermissions();
     
@@ -133,11 +135,11 @@ class _MyHomePageState extends State<MyHomePage> {
         resolution: _selectedResolution,
         fps: _selectFrames,
         videoBitrate: 2_000_000, // Reduced bitrate for faster processing
-        codec: "h264",
+        codec: "h264",           // Force H.264 for maximum SDR compatibility
         container: "mp4",
         // crop: { 'x': 500, 'y': 300, 'width': 1280, 'height': 720 },
-        hdr: HDROptions(isHdr: false), // Set to false for better compatibility
       );
+
 
       final outPath = await NativeMediaConverter.transcode(opts);
       print(outPath);
@@ -170,8 +172,8 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  Future<void> _saveToGallery() async {
-    if (_transcodedVideo == null) {
+  Future<void> _saveToGallery(bool original) async {
+    if (!original && _transcodedVideo == null) {
       setState(() {
         _status = "No transcoded video to save";
       });
@@ -186,7 +188,11 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       await _requestPermissions();
 
+      if( original == true){
+        await Gal.putVideo(_selectedVideo!.path, album: "Transcoded Videos");
+      } else {
       await Gal.putVideo(_transcodedVideo!.path, album: "Transcoded Videos");
+      }
 
       setState(() {
         _isSaving = false;
@@ -291,6 +297,14 @@ class _MyHomePageState extends State<MyHomePage> {
               },
               icon: const Icon(Icons.stop),
             ),
+
+            IconButton(
+              onPressed: () {
+                _saveToGallery(true);
+               
+              },
+              icon: const Icon(Icons.download),
+            ),
           ],
         ),
       ],
@@ -393,8 +407,8 @@ class _MyHomePageState extends State<MyHomePage> {
                     ),
                   ),
                   ElevatedButton.icon(
-                    onPressed: _transcodedVideo != null && !_isSaving 
-                        ? _saveToGallery 
+                    onPressed: _transcodedVideo != null && !_isSaving
+                        ? () => _saveToGallery(false)
                         : null,
                     icon: _isSaving 
                         ? const SizedBox(

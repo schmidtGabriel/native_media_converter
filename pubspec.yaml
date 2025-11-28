@@ -1,6 +1,6 @@
 name: native_media_converter
 description: A Flutter plugin for native video conversion on Android and iOS. Convert videos to different resolutions, frame rates, and formats with simple API calls.
-version: 0.0.1
+version: 0.0.2
 homepage: https://github.com/schmidtGabriel/native_media_converter
 repository: https://github.com/schmidtGabriel/native_media_converter
 issue_tracker: https://github.com/schmidtGabriel/native_media_converter/issues

@@ -60,7 +60,6 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
         let bitrate = args["videoBitrate"] as? Int ?? 5_000_000
         let fps = args["fps"] as? Int ?? 30
         let codec = args["codec"] as? String ?? "h264"
-        let hdr = args["hdr"] as? Bool ?? false
         let resolution = args["resolution"] as? Int ?? nil
 
         self.transcodeVideo(
@@ -73,7 +72,7 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
             bitrate: bitrate,
             fps: fps,
             codec: codec,
-            hdr: hdr
+            
         ) { success, outputPath in
             if success {
                 result(outputPath)
@@ -115,7 +114,6 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
         bitrate: Int,
         fps: Int,
         codec: String,
-        hdr: Bool,
         completion: @escaping (Bool, String?) -> Void
     ) {
         let sourceURL = URL(fileURLWithPath: inputPath)
@@ -126,15 +124,16 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
                 // Get video info to determine orientation and properties
                 let videoInfo = try await VideoTool.getInfo(source: sourceURL)
                 let isPortrait = videoInfo.resolution.height > videoInfo.resolution.width
+                let isHdr = videoInfo.isHDR;
                 
-                print("MediaToolSwift Advanced: Video info - Resolution: \(videoInfo.resolution), Duration: \(videoInfo.duration), Orientation: \(isPortrait ? "Portrait" : "Landscape")")
+                print("MediaToolSwift Advanced: Video info - Resolution: \(videoInfo.resolution), Duration: \(videoInfo.duration), Orientation: \(isPortrait ? "Portrait" : "Landscape"), HDR: \(isHdr ? "YES" : "NO")")
+                
+                // Check if source has HDR and log it
+                print("MediaToolSwift Advanced: Source video analysis - checking for HDR characteristics")
                 
                 // Configure video codec
                 let videoCodec: AVVideoCodecType = self.mapStringToCodec(codec)
-                
-                // Configure video profile and color settings
-                let (profile, colorPrimary) = self.configureProfileAndColor(codec: videoCodec, hdr: hdr)
-                
+                       
 
                 // Configure video size and operations
                 var targetSize = !isPortrait ? CGSize(width: width, height: height) : CGSize(width: height, height: width)
@@ -148,19 +147,24 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
                 }
                
                 let videoOperations = self.configureVideoOperations(crop: crop)
+            
                 
-                // Configure video settings
-                let videoSettings = CompressionVideoSettings(
-                    codec: videoCodec,
-                    bitrate: .value(bitrate),
-                    size: videoSize,
-                    frameRate: fps,
-                    preserveAlphaChannel: false,
-                    profile: profile,
-                    color: colorPrimary,
-                    hardwareAcceleration: .auto,
-                    edit: videoOperations
-                )
+                var videoSettings: CompressionVideoSettings
+                
+                // Create settings with explicit SDR parameters
+                    videoSettings = CompressionVideoSettings(
+                        codec: videoCodec,
+                        bitrate: .value(bitrate),
+                        size: videoSize,
+                        frameRate: fps,
+                        preserveAlphaChannel: false,
+                        profile: .h264High,
+                        color: .itu709_2,    
+                        hardwareAcceleration: .auto,
+                        edit: videoOperations
+                    )
+                
+              
                 
                 // Configure audio settings
                 let audioSettings = CompressionAudioSettings(
@@ -170,8 +174,7 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
                 )
                 
                 // print("MediaToolSwift Advanced: Starting conversion with settings - Codec: \(videoCodec), Bitrate: \(bitrate), Size: \(targetSize), FPS: \(fps)")
-                
-                // Start conversion
+                                
                 self.conversionTask = await VideoTool.convert(
                     source: sourceURL,
                     destination: destinationURL,
@@ -189,6 +192,7 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
                                 
                             case .completed(let info):
                                 print("MediaToolSwift Advanced: Transcoding completed: \(info.url.path)")
+                              
                                 self?.cleanupProgress()
                                 completion(true, info.url.path)
                                 
@@ -254,23 +258,7 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
         }
     }
     
-    private func configureProfileAndColor(codec: AVVideoCodecType, hdr: Bool) -> (CompressionVideoProfile?, CompressionColorPrimary?) {
-        var profile: CompressionVideoProfile?
-        var colorPrimary: CompressionColorPrimary?
-        
-        if hdr && (codec == .hevc) {
-            profile = .hevcMain10
-            colorPrimary = .itu2020_hlg // or .itu2020_pq for PQ HDR
-        } else if codec == .h264 {
-            profile = .h264High
-        } else if codec == .hevc {
-            profile = .hevcMain
-        }
-        
-        return (profile, colorPrimary)
-    }
-    
-     private func configureVideoOperations(crop: [String: Any]?) -> Set<VideoOperation> {
+    private func configureVideoOperations(crop: [String: Any]?) -> Set<VideoOperation> {
         var videoOperations: Set<VideoOperation> = []
         
         if let cropData = crop,
@@ -339,7 +327,8 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
                 "hasAudio": info.hasAudio, // Remove .rawValue since hasAudio is Bool
                 "audioCodec": info.audioCodec?.rawValue ?? "", // Add optional chaining
                 "videoCodec": info.videoCodec.rawValue ?? "",
-                "fileSize": fileSize
+                "fileSize": fileSize,
+                "isHdr": info.isHDR
             ]
         } catch {
             print("MediaToolSwift Advanced: Error getting video info: \(error.localizedDescription)")
@@ -347,6 +336,82 @@ public class NativeMediaConverterPluginMediaTool: NSObject, FlutterPlugin, Flutt
                 "error": error.localizedDescription
             ]
         }
+    }
+    
+    // private func analyzeOutputVideo(path: String) async {
+    //     print("=== OUTPUT VIDEO ANALYSIS ===")
+    //     print("Analyzing: \(path)")
+        
+    //     do {
+    //         let url = URL(fileURLWithPath: path)
+    //         let asset = AVAsset(url: url)
+            
+    //         // Load video tracks asynchronously
+    //         let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            
+    //         for (index, track) in videoTracks.enumerated() {
+    //             print("Video Track \(index):")
+                
+    //             // Get format descriptions to check codec and HDR metadata
+    //             let formatDescriptions = track.formatDescriptions
+    //             let codecString = formatDescriptions.first.map { desc in
+    //                 let mediaSubType = CMFormatDescriptionGetMediaSubType(desc)
+    //                 return fourCCToString(mediaSubType)
+    //             } ?? "Unknown"
+                
+    //             print("  Codec: \(codecString)")
+    //             print("  Natural Size: \(track.naturalSize)")
+    //             print("  Estimated Data Rate: \(track.estimatedDataRate)")
+                
+    //             // Analyze format descriptions for HDR metadata
+    //             for (formatIndex, formatDesc) in formatDescriptions.enumerated() {
+    //                 print("  Format Description \(formatIndex):")
+                    
+    //                 let mediaSubType = CMFormatDescriptionGetMediaSubType(formatDesc)
+    //                 print("    Media SubType: \(fourCCToString(mediaSubType))")
+                    
+    //                 // Check for HDR-related extensions or metadata
+    //                 let extensions = CMFormatDescriptionGetExtensions(formatDesc)
+    //                 if let ext = extensions as? [String: Any] {
+    //                     print("    Extensions: \(ext)")
+                        
+    //                     // Look for HDR-specific keys
+    //                     let hasHDRKeys = ext.keys.contains { key in
+    //                         let keyStr = key.lowercased()
+    //                         return keyStr.contains("hdr") || 
+    //                                keyStr.contains("dolby") ||
+    //                                keyStr.contains("2020") ||
+    //                                keyStr.contains("hlg") ||
+    //                                keyStr.contains("pq") ||
+    //                                keyStr.contains("colorprimaries") ||
+    //                                keyStr.contains("transferfunction") ||
+    //                                keyStr.contains("matrixcoefficients")
+    //                     }
+                        
+    //                     if hasHDRKeys {
+    //                         print("    ⚠️  WARNING: Potential HDR metadata found in extensions")
+    //                     } else {
+    //                         print("    ✅ No obvious HDR metadata in extensions")
+    //                     }
+    //                 } else {
+    //                     print("    ✅ No format extensions (good for SDR)")
+    //                 }
+    //             }
+    //         }
+            
+    //     } catch {
+    //         print("Error analyzing output video: \(error.localizedDescription)")
+    //     }
+    // }
+    
+    private func fourCCToString(_ fourCC: FourCharCode) -> String {
+        let bytes = [
+            UInt8((fourCC >> 24) & 0xFF),
+            UInt8((fourCC >> 16) & 0xFF),
+            UInt8((fourCC >> 8) & 0xFF),
+            UInt8(fourCC & 0xFF)
+        ]
+        return String(bytes: bytes, encoding: .ascii) ?? "Unknown"
     }
 }
 
