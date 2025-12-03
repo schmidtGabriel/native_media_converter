@@ -43,8 +43,6 @@ class _MyHomePageState extends State<MyHomePage> {
   final ImagePicker _picker = ImagePicker();
   bool _isSaving = false;
   int _selectedResolution = 720; // Default to 720p
-  int _selectWidth = 1280;
-  int _selectHeight = 720;
   int _selectFrames = 30;
 
 
@@ -130,8 +128,6 @@ class _MyHomePageState extends State<MyHomePage> {
       final opts = ConvertOptions(
         inputPath: _selectedVideo!.path,
         outputPath: outputFile.path,
-        width: _selectWidth,
-        height: _selectHeight,
         resolution: _selectedResolution,
         fps: _selectFrames,
         videoBitrate: 2_000_000, // Reduced bitrate for faster processing
@@ -456,23 +452,7 @@ class _MyHomePageState extends State<MyHomePage> {
         setState(() {
           _selectedResolution = resolution;
 
-          switch (resolution) {
-            case 480:
-              _selectWidth = 480;
-              _selectHeight = 270;
-              break;
-            case 720:
-              _selectWidth = 1280;
-              _selectHeight = 720;
-              break;
-            case 1080:
-              _selectWidth = 1920;
-              _selectHeight = 1080;
-              break;
-            default:
-              _selectWidth = 1280;
-              _selectHeight = 720;
-          }
+          // width/height are derived natively from resolution+orientation
 
         });
       },

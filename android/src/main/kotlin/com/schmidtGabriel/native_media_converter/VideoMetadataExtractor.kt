@@ -85,7 +85,8 @@ object VideoMetadataExtractor {
             val (displayWidth, displayHeight) = when (rotation) {
                 90, 270 -> Pair(actualHeight, actualWidth) // Swap for portrait rotations
                 else -> Pair(actualWidth, actualHeight)
-            }
+            }    
+            
             
             VideoMetadata(
                 width = actualWidth,
@@ -159,9 +160,17 @@ data class VideoMetadata(
     fun isRotated(): Boolean = rotation != 0
     
     /**
-     * Check if this video is in portrait orientation (after rotation)
+     * Check if this video is in portrait orientation
+     * A video is portrait if:
+     * 1. It has 90 or 270 degree rotation (needs rotation), OR
+     * 2. After considering rotation, height > width
      */
-    fun isPortrait(): Boolean = displayHeight > displayWidth
+    fun isPortrait(): Boolean {
+      
+        // Otherwise check if height > width (after rotation adjustment)
+        Log.d("VideoMetadata", "isPortrait check: displayWidth=$displayWidth, displayHeight=$displayHeight")
+        return displayHeight > displayWidth
+    }
     
     /**
      * Get aspect ratio (width:height) after considering rotation

@@ -12,14 +12,13 @@ class NativeMediaConverterPlugin: FlutterPlugin, MethodChannel.MethodCallHandler
    private lateinit var channel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
-    private val processor = VideoConverter()
     private lateinit var media3Transcoder: Media3TranscoderEngine
 
    override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        channel = MethodChannel(binding.binaryMessenger, "native_media_converter_mediatool")
+        channel = MethodChannel(binding.binaryMessenger, "native_media_converter")
         channel.setMethodCallHandler(this)
 
-        eventChannel = EventChannel(binding.binaryMessenger, "native_media_converter_mediatool/progress")
+        eventChannel = EventChannel(binding.binaryMessenger, "native_media_converter/progress")
         eventChannel.setStreamHandler(this)
         
         // Initialize Media3 transcoder
@@ -43,17 +42,6 @@ class NativeMediaConverterPlugin: FlutterPlugin, MethodChannel.MethodCallHandler
 
     override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: MethodChannel.Result) {
         when (call.method) {
-            "transcode_old" -> {
-                val args = call.arguments as Map<String, Any>
-                processor.setEventSink { eventSink }
-                processor.transcode(args) { outputPath ->
-                    if (outputPath != null) {
-                        result.success(outputPath)
-                    } else {
-                        result.error("TRANSCODE_ERROR", "Error on transcoding", null)
-                    }
-                }
-            }
             "transcode" -> {
                 try {
                     val args = call.arguments as Map<String, Any>
@@ -62,11 +50,11 @@ class NativeMediaConverterPlugin: FlutterPlugin, MethodChannel.MethodCallHandler
                         if (outputPath != null) {
                             result.success(outputPath)
                         } else {
-                            result.error("TRANSCODE_ERROR", "Error on transcoding with Media3", null)
+                            result.error("TRANSCODE_ERROR", "Transcoding failed. Check Android logcat for details.", null)
                         }
                     }
                 } catch (e: Exception) {
-                    result.error("MEDIA3_NOT_AVAILABLE", "Media3 is not available or not initialized", null)
+                    result.error("MEDIA3_ERROR", "Media3 error: ${e.message}", e.toString())
                 }
             }
             "getSupportedCodecs" -> {
@@ -77,7 +65,7 @@ class NativeMediaConverterPlugin: FlutterPlugin, MethodChannel.MethodCallHandler
                     result.error("MEDIA3_NOT_AVAILABLE", "Media3 is not available", null)
                 }
             }
-            "cancelTranscoding" -> {
+            "cancelTranscode" -> {
                 try {
                     media3Transcoder.cancel()
                     result.success(true)

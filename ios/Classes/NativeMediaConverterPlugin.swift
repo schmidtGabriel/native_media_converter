@@ -1,234 +1,429 @@
 import Flutter
 import UIKit
 import AVFoundation
+import MediaToolSwift
 
 public class NativeMediaConverterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
-     private var eventSink: FlutterEventSink?
-    private var exportSession: AVAssetExportSession?
+    private var eventSink: FlutterEventSink?
+    private var conversionTask: CompressionTask?
+    private var currentProgress: Progress?
+    private var progressObserver: NSKeyValueObservation?
 
     public static func register(with registrar: FlutterPluginRegistrar) {
-    let methodChannel = FlutterMethodChannel(name: "native_media_converter", binaryMessenger: registrar.messenger())
-    let eventChannel = FlutterEventChannel(name: "native_media_converter/progress", binaryMessenger: registrar.messenger())
+        let methodChannel = FlutterMethodChannel(name: "native_media_converter", binaryMessenger: registrar.messenger())
+        let eventChannel = FlutterEventChannel(name: "native_media_converter/progress", binaryMessenger: registrar.messenger())
 
-    let instance = NativeMediaConverterPlugin()
-    registrar.addMethodCallDelegate(instance, channel: methodChannel)
-    eventChannel.setStreamHandler(instance)
-}
+        let instance = NativeMediaConverterPlugin()
+        registrar.addMethodCallDelegate(instance, channel: methodChannel)
+        eventChannel.setStreamHandler(instance)
+    }
 
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        // print("MediaToolSwift Advanced: Event sink connected")
         self.eventSink = events
         return nil
     }
 
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        // print("MediaToolSwift Advanced: Event sink disconnected")
         self.eventSink = nil
+        self.conversionTask?.cancel()
+        self.cleanupProgress()
         return nil
     }
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-        if call.method == "transcode" {
-            guard let args = call.arguments as? [String: Any],
-                  let inputPath = args["inputPath"] as? String,
-                  let outputPath = args["outputPath"] as? String else {
-                result(FlutterError(code: "BAD_ARGS", message: "Missing input or output path", details: nil))
-                return
-            }
-
-            let crop = args["crop"] as? [String: Any]
-            let width = args["width"] as? Int ?? 1920
-            let height = args["height"] as? Int ?? 1080
-            let bitrate = args["videoBitrate"] as? Int ?? 5_000_000
-            let fps = args["fps"] as? Int ?? 30
-            let codec = args["codec"] as? String ?? "h264"
-            let hdr = args["hdr"] as? Bool ?? false
-
-            self.transcodeVideo(
-                inputPath: inputPath,
-                outputPath: outputPath,
-                crop: crop,
-                width: width,
-                height: height,
-                bitrate: bitrate,
-                fps: fps,
-                codec: codec,
-                hdr: hdr,
-            ) { success, outputPath in
-                if success == false as Bool?, !success {
-                    result(nil)
-                } else {
-                    print("Transcoding completed: \(outputPath)")
-                    result(outputPath)
-                }
-            }
-        } else {
-            result(nil)
+        switch call.method {
+        case "transcode":
+            print("Transcoding video...")
+            handleTranscode(call: call, result: result)
+        case "getVideoInfo":
+            handleGetVideoInfo(call: call, result: result)
+        case "cancelTranscode":
+            handleCancelTranscode(result: result)
+        default:
+            result(FlutterMethodNotImplemented)
         }
     }
+    
+    private func handleTranscode(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let inputPath = args["inputPath"] as? String,
+              let outputPath = args["outputPath"] as? String else {
+            result(FlutterError(code: "BAD_ARGS", message: "Missing input or output path", details: nil))
+            return
+        }
 
-    private func transcodeVideo(inputPath: String,
-                                outputPath: String,
-                                crop: [String: Any]?,
-                                width: Int,
-                                height: Int,
-                                bitrate: Int,
-                                fps: Int,
-                                codec: String,
-                                hdr: Bool,
-                                completion: @escaping (Bool, String?) -> Void) {
-        let asset = AVAsset(url: URL(fileURLWithPath: inputPath))
+        let crop = args["crop"] as? [String: Any]
+        let bitrate = args["videoBitrate"] as? Int ?? 5_000_000
+        let fps = args["fps"] as? Int ?? 30
+        let codec = args["codec"] as? String ?? "h264"
+        let resolution = args["resolution"] as? Int ?? 720
 
-        guard asset.tracks(withMediaType: .video).first != nil else {
-            completion(false, nil)
+        self.transcodeVideo(
+            inputPath: inputPath,
+            outputPath: outputPath,
+            crop: crop,
+            resolution: resolution,
+            bitrate: bitrate,
+            fps: fps,
+            codec: codec,
+            
+        ) { success, outputPath in
+            if success {
+                result(outputPath)
+            } else {
+                result(FlutterError(code: "TRANSCODE_FAILED", message: "Failed to transcode video", details: nil))
+            }
+        }
+    }
+    
+    private func handleGetVideoInfo(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let videoPath = args["videoPath"] as? String else {
+            result(FlutterError(code: "BAD_ARGS", message: "Missing video path", details: nil))
             return
         }
         
-        if let videoTrack = asset.tracks(withMediaType: .video).first {
+        Task {
+            let info = await self.getVideoInfo(videoPath: videoPath)
+            DispatchQueue.main.async {
+                result(info)
+            }
+        }
+    }
+    
+    private func handleCancelTranscode(result: @escaping FlutterResult) {
+        print("MediaToolSwift Advanced: Cancelling transcoding...")
+        self.conversionTask?.cancel()
+        self.cleanupProgress()
+        result(true)
+    }
 
-
-        Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { timer in
-                if let session = self.exportSession {
-                    let progress = session.progress // 0.0 to 1.0
-                    self.eventSink?(progress)
-                    print("Progress: \(progress)")
-                    if session.status == .completed || session.status == .failed || session.status == .cancelled {
-                        timer.invalidate()
+    private func transcodeVideo(
+        inputPath: String,
+        outputPath: String,
+        crop: [String: Any]?,
+        resolution: Int,
+        bitrate: Int,
+        fps: Int,
+        codec: String,
+        completion: @escaping (Bool, String?) -> Void
+    ) {
+        let sourceURL = URL(fileURLWithPath: inputPath)
+        let destinationURL = URL(fileURLWithPath: outputPath)
+        
+        Task {
+            do {
+                // Get video info to determine orientation and properties
+                let videoInfo = try await VideoTool.getInfo(source: sourceURL)
+                let isPortrait = videoInfo.resolution.height > videoInfo.resolution.width
+                let isHdr = videoInfo.isHDR;
+                
+                print("MediaToolSwift Advanced: Video info - Resolution: \(videoInfo.resolution), Duration: \(videoInfo.duration), Orientation: \(isPortrait ? "Portrait" : "Landscape"), HDR: \(isHdr ? "YES" : "NO")")
+                
+                // Check if source has HDR and log it
+                print("MediaToolSwift Advanced: Source video analysis - checking for HDR characteristics")
+                
+                // Configure video codec
+                let videoCodec: AVVideoCodecType = self.mapStringToCodec(codec)
+                       
+                // Configure video size based on resolution and orientation
+                let mappedResolution = self.getResolution(resolution: resolution, isPortrait: isPortrait)
+                let targetSize = CGSize(width: mappedResolution?.width ?? 1280, height: mappedResolution?.height ?? 720)
+                let videoSize: CompressionVideoSize = .fit(targetSize)
+               
+                let videoOperations = self.configureVideoOperations(crop: crop)
+            
+                
+                var videoSettings: CompressionVideoSettings
+                
+                // Create settings with explicit SDR parameters
+                    videoSettings = CompressionVideoSettings(
+                        codec: videoCodec,
+                        bitrate: .value(bitrate),
+                        size: videoSize,
+                        frameRate: fps,
+                        preserveAlphaChannel: false,
+                        profile: .h264High,
+                        color: .itu709_2,    
+                        hardwareAcceleration: .auto,
+                        edit: videoOperations
+                    )
+                
+              
+                
+                // Configure audio settings
+                let audioSettings = CompressionAudioSettings(
+                    codec: .aac,
+                    bitrate: .auto,
+                    quality: .medium
+                )
+                
+                // print("MediaToolSwift Advanced: Starting conversion with settings - Codec: \(videoCodec), Bitrate: \(bitrate), Size: \(targetSize), FPS: \(fps)")
+                                
+                self.conversionTask = await VideoTool.convert(
+                    source: sourceURL,
+                    destination: destinationURL,
+                    fileType: .mp4,
+                    videoSettings: videoSettings,
+                    optimizeForNetworkUse: true,
+                    skipAudio: false,
+                    audioSettings: audioSettings,
+                    overwrite: true,
+                    callback: { [weak self] state in
+                        DispatchQueue.main.async {
+                            switch state {
+                            case .started:
+                                print("MediaToolSwift Advanced: Transcoding started")
+                                
+                            case .completed(let info):
+                                print("MediaToolSwift Advanced: Transcoding completed: \(info.url.path)")
+                              
+                                self?.cleanupProgress()
+                                completion(true, info.url.path)
+                                
+                            case .failed(let error):
+                                print("MediaToolSwift Advanced: Transcoding failed: \(error.localizedDescription)")
+                                self?.cleanupProgress()
+                                completion(false, nil)
+                                
+                            case .cancelled:
+                                print("MediaToolSwift Advanced: Transcoding cancelled")
+                                self?.cleanupProgress()
+                                completion(false, nil)
+                            }
+                        }
                     }
+                )
+                
+                // Set up progress monitoring using MediaToolSwift's Progress object
+                if let task = self.conversionTask {
+                    print("MediaToolSwift Advanced: Setting up progress monitoring for task")
+                    self.setupProgressMonitoring(task: task)
+                } else {
+                    print("MediaToolSwift Advanced: Warning - conversion task is nil, cannot set up progress monitoring")
+                }
+                
+            } catch {
+                print("MediaToolSwift Advanced: Error during transcoding setup: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    completion(false, nil)
                 }
             }
+        }
+    }
 
-            let videoInfo: [String : Any] = getVideoInfo(videoPath: inputPath)
-            let isPortrait = videoInfo["isPortrait"] as? Bool ?? false
-            print(isPortrait ? "Video is in portrait orientation." : "Video is in landscape orientation.")
-            // Create export session
-            let idealPreset = getPreset(width: width, height: height, bitrate: bitrate, fps: fps, codec: codec)
-            self.exportSession = AVAssetExportSession(asset: asset, presetName: idealPreset)
+    
+    // MARK: - Helper Methods
 
-            self.exportSession?.outputFileType = AVFileType.mp4
-            self.exportSession?.outputURL = URL(fileURLWithPath: outputPath)
 
-            // Video composition for cropping/scaling
-            let composition = AVMutableVideoComposition(asset: asset) { request in
-                var transform = CGAffineTransform.identity
-                if let cropRect = crop {
-                    let x = CGFloat(cropRect["x"] as? Int ?? 0)
-                    let y = CGFloat(cropRect["y"] as? Int ?? 0)
-                    transform = transform.translatedBy(x: -x, y: -y)
-                }
-                let output = request.sourceImage.transformed(by: transform)
-                request.finish(with: output, context: nil)
-            }
-            composition.renderSize = CGSize(width: width, height: height)
-            composition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
-            composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+    private func getResolution(resolution: Int, isPortrait: Bool) -> (width: Int, height: Int)? {
 
-             // HDR handling: if hdr=true, try to preserve color space
-            if hdr {
-                // exportSession.videoComposition?.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
-                // exportSession.videoComposition?.colorTransferFunction = AVVideoTransferFunction_ITU_R_2100_HLG
+        switch resolution {
+        case 1080:
+            return isPortrait ? (width: 1080, height: 1920) : (width: 1920, height: 1080)
+        case 720:
+            return isPortrait ? (width: 720, height: 1280) : (width: 1280, height: 720)
+        case 480:
+            return isPortrait ? (width: 480, height: 854) : (width: 854, height: 480)
+        default:
+            return nil
+        }
+    }
+    
+    private func mapStringToCodec(_ codec: String) -> AVVideoCodecType {
+        switch codec.lowercased() {
+        case "h264":
+            return .h264
+        case "h265", "hevc":
+            return .hevc
+        case "prores":
+            return .proRes422
+        default:
+            return .h264
+        }
+    }
+    
+    private func configureVideoOperations(crop: [String: Any]?) -> Set<VideoOperation> {
+        var videoOperations: Set<VideoOperation> = []
+        
+        if let cropData = crop,
+           let x = cropData["x"] as? Int,
+           let y = cropData["y"] as? Int,
+           let cropWidth = cropData["width"] as? Int,
+           let cropHeight = cropData["height"] as? Int {
+                        
+            videoOperations.insert(VideoOperation.crop(
+                Crop(
+                    origin: CGPoint(x: x, y: y),
+                    size: CGSize(width: cropWidth, height: cropHeight)
+                )
+            ))
+
+            
+            print("MediaToolSwift Advanced: Applying crop - X: \(x), Y: \(y), Width: \(cropWidth), Height: \(cropHeight)")
+        }
+        
+        return videoOperations
+    }
+
+    private func setupProgressMonitoring(task: CompressionTask) {
+        print("MediaToolSwift Advanced: Accessing task progress object")
+        
+        // Observe the main progress object from MediaToolSwift's CompressionTask
+        self.observeProgress(task.progress)
+        
+        // Optionally, you can also observe writing progress for more detailed feedback
+        // self.observeProgress(task.writingProgress)
+        
+        print("MediaToolSwift Advanced: Progress monitoring setup completed")
+    }
+    
+    private func cleanupProgress() {
+        self.progressObserver?.invalidate()
+        self.progressObserver = nil
+        self.currentProgress = nil
+        self.conversionTask = nil
+    }
+    
+    private func getVideoInfo(videoPath: String) async -> [String: Any] {
+        do {
+            let url = URL(fileURLWithPath: videoPath)
+            let info = try await VideoTool.getInfo(source: url)
+            
+            let isPortrait = info.resolution.height > info.resolution.width
+
+             // Get file size using FileManager
+            let fileSize: Int64
+            do {
+                let attributes = try FileManager.default.attributesOfItem(atPath: videoPath)
+                fileSize = attributes[.size] as? Int64 ?? 0
+            } catch {
+                fileSize = 0
             }
             
-            if isPortrait {
-                let instruction = AVMutableVideoCompositionInstruction()
-                let duration = asset.duration.isValid ? asset.duration : CMTime(seconds: 1, preferredTimescale: 600)
-                instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-
-            let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-            layerInstruction.setTransform(videoTrack.preferredTransform, at: .zero)
-            instruction.layerInstructions = [layerInstruction]
-            composition.instructions = [instruction]
-            }
-           
-
-            self.exportSession?.videoComposition = composition
+            return [
+                "width": Int(info.resolution.width),
+                "height": Int(info.resolution.height),
+                "orientation": isPortrait ? "portrait" : "landscape",
+                "isPortrait": isPortrait,
+                "duration": info.duration,
+                "fps": info.frameRate ?? 30.0,
+                "bitrate": info.videoBitrate ?? 0,
+                "hasAudio": info.hasAudio, // Remove .rawValue since hasAudio is Bool
+                "audioCodec": info.audioCodec?.rawValue ?? "", // Add optional chaining
+                "videoCodec": info.videoCodec.rawValue ?? "",
+                "fileSize": fileSize,
+                "isHdr": info.isHDR
+            ]
+        } catch {
+            print("MediaToolSwift Advanced: Error getting video info: \(error.localizedDescription)")
+            return [
+                "error": error.localizedDescription
+            ]
         }
-
-        self.exportSession?.exportAsynchronously { 
-
-            if self.exportSession?.status == .completed {
-                print("Video successfully exported as MP4.")
-                completion(true, self.exportSession?.outputURL?.path)
-
-            } else {
-                print("Failed to export video: \(String(describing: self.exportSession?.error))")
-                completion(false, nil)
-
-            } 
-
-        } 
-        }
-
-
-   private func getPreset(width: Int, height: Int, bitrate: Int, fps: Int, codec: String) -> String {
-    // For custom video composition to work, we need presets that support videoComposition
-    // AVAssetExportPresetHighestQuality ignores custom compositions
+    }
     
-    let totalPixels = width * height
-    print("Width: \(width) Height: \(height)")
+    // private func analyzeOutputVideo(path: String) async {
+    //     print("=== OUTPUT VIDEO ANALYSIS ===")
+    //     print("Analyzing: \(path)")
+        
+    //     do {
+    //         let url = URL(fileURLWithPath: path)
+    //         let asset = AVAsset(url: url)
+            
+    //         // Load video tracks asynchronously
+    //         let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            
+    //         for (index, track) in videoTracks.enumerated() {
+    //             print("Video Track \(index):")
+                
+    //             // Get format descriptions to check codec and HDR metadata
+    //             let formatDescriptions = track.formatDescriptions
+    //             let codecString = formatDescriptions.first.map { desc in
+    //                 let mediaSubType = CMFormatDescriptionGetMediaSubType(desc)
+    //                 return fourCCToString(mediaSubType)
+    //             } ?? "Unknown"
+                
+    //             print("  Codec: \(codecString)")
+    //             print("  Natural Size: \(track.naturalSize)")
+    //             print("  Estimated Data Rate: \(track.estimatedDataRate)")
+                
+    //             // Analyze format descriptions for HDR metadata
+    //             for (formatIndex, formatDesc) in formatDescriptions.enumerated() {
+    //                 print("  Format Description \(formatIndex):")
+                    
+    //                 let mediaSubType = CMFormatDescriptionGetMediaSubType(formatDesc)
+    //                 print("    Media SubType: \(fourCCToString(mediaSubType))")
+                    
+    //                 // Check for HDR-related extensions or metadata
+    //                 let extensions = CMFormatDescriptionGetExtensions(formatDesc)
+    //                 if let ext = extensions as? [String: Any] {
+    //                     print("    Extensions: \(ext)")
+                        
+    //                     // Look for HDR-specific keys
+    //                     let hasHDRKeys = ext.keys.contains { key in
+    //                         let keyStr = key.lowercased()
+    //                         return keyStr.contains("hdr") || 
+    //                                keyStr.contains("dolby") ||
+    //                                keyStr.contains("2020") ||
+    //                                keyStr.contains("hlg") ||
+    //                                keyStr.contains("pq") ||
+    //                                keyStr.contains("colorprimaries") ||
+    //                                keyStr.contains("transferfunction") ||
+    //                                keyStr.contains("matrixcoefficients")
+    //                     }
+                        
+    //                     if hasHDRKeys {
+    //                         print("    ⚠️  WARNING: Potential HDR metadata found in extensions")
+    //                     } else {
+    //                         print("    ✅ No obvious HDR metadata in extensions")
+    //                     }
+    //                 } else {
+    //                     print("    ✅ No format extensions (good for SDR)")
+    //                 }
+    //             }
+    //         }
+            
+    //     } catch {
+    //         print("Error analyzing output video: \(error.localizedDescription)")
+    //     }
+    // }
     
-    // Consider bitrate per pixel to determine quality
-    let bitratePerPixel = Double(bitrate) / Double(totalPixels)
-    
-    // High bitrate per pixel suggests high quality intent
-    let isHighBitrate = bitratePerPixel > 0.1
-    
-    // High frame rate content
-    let isHighFrameRate = fps > 30
-    
-    // For portrait videos, we need to be more flexible with preset selection
-    // since standard presets are designed for landscape orientation
-    
-    // Determine preset based on resolution and quality requirements
-    if totalPixels <= 307200 { // 640x480 or equivalent (480x640 for portrait)
-        return isHighBitrate ? AVAssetExportPresetMediumQuality : AVAssetExportPresetLowQuality
-    } else if totalPixels <= 518400 { // 960x540 or equivalent (540x960 for portrait)
-        return AVAssetExportPresetMediumQuality
-    } else if totalPixels <= 921600 { // 1280x720 or equivalent (720x1280 for portrait)
-        // For portrait videos at this resolution, use medium quality to ensure compatibility
-        return (isHighBitrate || isHighFrameRate ? AVAssetExportPreset1280x720 : AVAssetExportPreset1280x720)
-    } else if totalPixels <= 2073600 { // 1920x1080 or equivalent (1080x1920 for portrait)
-        // For portrait videos, use medium/high quality presets that work better with custom compositions
-        return (isHighBitrate || isHighFrameRate ? AVAssetExportPreset1920x1080 : AVAssetExportPreset1920x1080)
-    } else if totalPixels <= 8294400 { // 3840x2160 or equivalent (2160x3840 for portrait)
-        // For 4K portrait, use high quality preset
-        return  AVAssetExportPreset3840x2160
-    } else {
-        // For very high resolutions, use highest quality preset
-        return AVAssetExportPresetHighestQuality
+    private func fourCCToString(_ fourCC: FourCharCode) -> String {
+        let bytes = [
+            UInt8((fourCC >> 24) & 0xFF),
+            UInt8((fourCC >> 16) & 0xFF),
+            UInt8((fourCC >> 8) & 0xFF),
+            UInt8(fourCC & 0xFF)
+        ]
+        return String(bytes: bytes, encoding: .ascii) ?? "Unknown"
     }
 }
 
-private func getVideoInfo(videoPath: String) -> [String: Any] {
-        let asset = AVAsset(url: URL(fileURLWithPath: videoPath))
+// MARK: - Extensions for MediaToolSwift Integration
+
+extension NativeMediaConverterPlugin {
+    
+    /// Enhanced progress monitoring that integrates with MediaToolSwift's progress system
+    private func observeProgress(_ progress: Progress) {
+        self.currentProgress = progress
         
-        guard let videoTrack = asset.tracks(withMediaType: .video).first else {
-            return [:]
+        self.progressObserver = progress.observe(\.fractionCompleted, options: [.new, .initial]) { [weak self] progress, change in
+            DispatchQueue.main.async {
+                let fractionCompleted = progress.fractionCompleted
+                print("MediaToolSwift Advanced: Progress updated: \(fractionCompleted)")
+                
+                // Send progress to Flutter via event sink
+                if let eventSink = self?.eventSink {
+                    eventSink(fractionCompleted)
+                } else {
+                    print("MediaToolSwift Advanced: Warning - eventSink is nil, cannot send progress")
+                }
+            }
         }
         
-        let naturalSize = videoTrack.naturalSize
-        let transform = videoTrack.preferredTransform
-        
-        // Calculate actual display dimensions considering rotation
-        let size = naturalSize.applying(transform)
-        let displayWidth = abs(size.width)
-        let displayHeight = abs(size.height)
-        
-        // Determine rotation angle from transform matrix
-        let rotationAngle = atan2(transform.b, transform.a) * (180 / .pi)
-        
-        // Determine orientation based on display dimensions
-        let isPortrait = displayHeight > displayWidth
-        
-        return [
-            "width": Int(displayWidth),
-            "height": Int(displayHeight),
-            "naturalWidth": Int(naturalSize.width),
-            "naturalHeight": Int(naturalSize.height),
-            "rotation": Int(rotationAngle),
-            "orientation": isPortrait ? "portrait" : "landscape",
-            "isPortrait": isPortrait,
-            "duration": asset.duration.seconds,
-            "fps": videoTrack.nominalFrameRate
-        ]
+        print("MediaToolSwift Advanced: Progress monitoring started")
     }
-    
-    }
+}

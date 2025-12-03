@@ -15,11 +15,9 @@ import 'package:native_media_converter/native_media_converter.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('getPlatformVersion test', (WidgetTester tester) async {
-    final NativeMediaConverter plugin = NativeMediaConverter();
-    final String? version = await plugin.getPlatformVersion();
-    // The version string depends on the host platform running the test, so
-    // just assert that some non-empty string is returned.
-    expect(version?.isNotEmpty, true);
+  testWidgets('getSupportedCodecs test', (WidgetTester tester) async {
+    final codecs = await NativeMediaConverter.getSupportedCodecs();
+    // Should return a list (may be empty on some platforms)
+    expect(codecs, isA<List<String>>());
   });
 }

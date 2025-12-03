@@ -1,3 +1,11 @@
+## 0.0.3
+
+* **BREAKING CHANGE**: Removed `width` and `height` parameters from `ConvertOptions`
+* Video dimensions are now automatically determined from `resolution` and input video orientation
+* Simplified API - just specify resolution (480, 720, 1080) and orientation is handled automatically
+* Updated example app to demonstrate resolution-based workflow
+* Fixed test suite to match new API
+
 ## 0.0.1
 
 * Initial release of Native Media Converter plugin

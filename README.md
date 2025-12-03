@@ -22,7 +22,7 @@ Add this to your package's `pubspec.yaml` file:
 
 ```yaml
 dependencies:
-  native_media_converter: ^0.0.2
+  native_media_converter: ^0.0.3
 ```
 
 Then run:
@@ -48,7 +48,7 @@ final options = ConvertOptions(
   inputPath: '/path/to/input/video.mp4',
   outputPath: '/path/to/output/video.mp4',
   width: 1280,
-  height: 720,
+  // width/height are derived from `resolution` and input orientation on the native side
   resolution: 720,
   fps: 30,
   videoBitrate: 2000000,

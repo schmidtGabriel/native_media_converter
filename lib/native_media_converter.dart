@@ -7,9 +7,8 @@ class ConvertOptions {
   final String outputPath;
   final String container;   // mp4|mov
   final String codec;  // h264|hevc
-  final int width;       // target width (0 = keep)
-  final int height;         // target height (0 = keep)
   final int? resolution;  // 1080 || 720 || 480
+  // Width/height are now derived from `resolution` and input orientation
   final int fps;            // 0 = keep input
   final int videoBitrate;   // in bits per second (use 0 to prefer CRF/CQ mode)
   final double crf;         // 0..51, lower=better quality. If >0, plugin will try CRF/CQ mode
@@ -26,8 +25,6 @@ class ConvertOptions {
     required this.outputPath,
     this.container = "mp4",
     this.codec = "h264",
-    this.width = 0,
-    this.height = 0,
     this.resolution,
     this.fps = 0,
     this.videoBitrate = 0,
@@ -46,8 +43,7 @@ class ConvertOptions {
     'outputPath': outputPath,
     'container': container,
     'codec': codec,
-    'width': width,
-    'height': height,
+    // native side will map `resolution`+orientation -> width/height
     'resolution': resolution,
     'fps': fps,
     'videoBitrate': videoBitrate,
@@ -65,8 +61,8 @@ class ConvertOptions {
 
 
 class NativeMediaConverter {
-  static const MethodChannel _m = MethodChannel('native_media_converter_mediatool');
-  static const EventChannel _e = EventChannel('native_media_converter_mediatool/progress');
+  static const MethodChannel _m = MethodChannel('native_media_converter');
+  static const EventChannel _e = EventChannel('native_media_converter/progress');
 
   static Stream<double> progressStream() =>
     _e.receiveBroadcastStream().map((e) => (e as num).toDouble());

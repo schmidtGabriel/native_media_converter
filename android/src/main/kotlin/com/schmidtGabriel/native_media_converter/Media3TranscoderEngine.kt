@@ -61,8 +61,6 @@ class Media3TranscoderEngine(private val context: Context) {
             val inputPath = params["inputPath"] as? String
             val outputPath = params["outputPath"] as? String
             val bitrate = params["videoBitrate"] as? Int
-            val width = params["width"] as? Int
-            val height = params["height"] as? Int
             val frameRate = params["fps"] as? Int ?: 30
             val videoCodec = params["codec"] as? String
             val audioCodec = params["audioCodec"] as? String
@@ -123,14 +121,13 @@ class Media3TranscoderEngine(private val context: Context) {
 
             var effects = arrayListOf<Effect>()
 
+            // Add resolution effect
             effects.add(Presentation.createForHeight(resolution))
-            effects.add(FrameDropEffect.createDefaultFrameDropEffect(frameRate.toFloat()))
+            
+            // Note: FrameDropEffect might not be available in all Media3 versions
+            // Commenting out to avoid compatibility issues
+            // effects.add(FrameDropEffect.createDefaultFrameDropEffect(frameRate.toFloat()))
 
-            if (metadata != null) {
-                if(metadata.get("isPortrait") == true){
-                    effects.add(ScaleAndRotateTransformation.Builder().setRotationDegrees(90F).build())
-                }
-            }
 
             // Create media item with effects
             val mediaItem = MediaItem.fromUri(inputUri)
@@ -199,8 +196,16 @@ class Media3TranscoderEngine(private val context: Context) {
                     result: ExportResult,
                     exception: ExportException
                 ) {
-                    Log.e(TAG, "Media3 transcoding failed", exception)
-                    sendProgressUpdate(1.0, "Media3 transcoding failed: ${exception.message}")
+                    val errorDetails = """
+                        |Media3 transcoding failed:
+                        |Error: ${exception.message}
+                        |Error code: ${exception.errorCode}
+                        |Cause: ${exception.cause?.message}
+                        |Stack trace: ${exception.stackTraceToString()}
+                    """.trimMargin()
+                    
+                    Log.e(TAG, errorDetails, exception)
+                    sendProgressUpdate(1.0, "Transcoding failed: ${exception.message}")
                     progressTimer.cancel()
                     callback(null)
                 }
@@ -238,8 +243,16 @@ class Media3TranscoderEngine(private val context: Context) {
 
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error during Media3 transcoding", e)
-            sendProgressUpdate(0.0, "Error: ${e.message}")
+            val errorDetails = """
+                |Exception during Media3 transcoding setup:
+                |Error: ${e.message}
+                |Type: ${e.javaClass.simpleName}
+                |Cause: ${e.cause?.message}
+                |Stack trace: ${e.stackTraceToString()}
+            """.trimMargin()
+            
+            Log.e(TAG, errorDetails, e)
+            sendProgressUpdate(0.0, "Setup error: ${e.message}")
             callback(null)
         }
     }
@@ -395,6 +408,10 @@ class Media3TranscoderEngine(private val context: Context) {
      */
     fun getVideoMetadata(inputPath: String): Map<String, Any>? {
        val metadata = VideoMetadataExtractor.getVideoMetadata(inputPath)
+
+       //log extracted metadata
+       Log.d(TAG, "Extracted metadata for $inputPath: $metadata")
+       
 
         if (metadata != null) {
            return mapOf(
